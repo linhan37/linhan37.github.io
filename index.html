@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ascend for PyTorch 社区运营看板</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="css/dashboard.css?v=8">
+</head>
+<body>
+    <div class="dashboard">
+        <!-- 头部 -->
+        <header class="dashboard-header">
+            <div class="logo-section">
+                <img src="/picture/pytorch.svg" alt="PyTorch Logo" class="logo">
+                <h1>Ascend for PyTorch 社区运营看板<span class="dept-info">昇腾AI框架生态发展（模块）</span></h1>
+            </div>
+            <div class="data-period">
+                数据周期: <span id="period-range">--</span>
+            </div>
+        </header>
+
+        <!-- 第一行：核心指标 -->
+        <section class="kpi-section">
+            <div class="kpi-card">
+                <div class="kpi-title">核心开发者统计</div>
+                <div class="kpi-value">
+                    <span class="kpi-new">+<span id="kpi-core-new">0</span></span>
+                    <span class="kpi-divider">/</span>
+                    <span class="kpi-total" id="kpi-core-total">0</span>
+                </div>
+                <div class="kpi-label">上周新增/总计</div>
+            </div>
+
+            <div class="kpi-card">
+                <div class="kpi-title">贡献者统计</div>
+                <div class="kpi-value">
+                    <span class="kpi-new">+<span id="kpi-contributor-new">0</span></span>
+                    <span class="kpi-divider">/</span>
+                    <span class="kpi-new" style="color: #0EA5E9;">+<span id="kpi-contributor-2026">0</span></span>
+                    <span class="kpi-divider">/</span>
+                    <span class="kpi-total" id="kpi-contributor-total">0</span>
+                </div>
+                <div class="kpi-label">上周新增/26年新增/总计</div>
+            </div>
+
+            <div class="kpi-card">
+                <div class="kpi-title">PR统计<span class="kpi-subtitle">（master分支）</span></div>
+                <div class="kpi-value">
+                    <span class="kpi-new">+<span id="kpi-pr-new">0</span></span>
+                    <span class="kpi-divider">/</span>
+                    <span class="kpi-total" id="kpi-pr-total">0</span>
+                </div>
+                <div class="kpi-label">上周新增/26年累计</div>
+            </div>
+
+            <div class="kpi-card">
+                <div class="kpi-title">Issue统计</div>
+                <div class="kpi-value">
+                    <span class="kpi-new">+<span id="kpi-issue-new">0</span></span>
+                    <span class="kpi-divider">/</span>
+                    <span class="kpi-total" id="kpi-issue-total">0</span>
+                </div>
+                <div class="kpi-label">上周新增/全量</div>
+            </div>
+
+            <div class="kpi-card">
+                <div class="kpi-title">下载量统计</div>
+                <div class="kpi-value">
+                    <span class="kpi-new">+<span id="kpi-download-new">0</span></span>
+                    <span class="kpi-divider">/</span>
+                    <span class="kpi-total" id="kpi-download-total">0</span>
+                </div>
+                <div class="kpi-label">上周新增/总计</div>
+            </div>
+        </section>
+
+        <!-- 第二行：社区规模趋势 -->
+        <section class="trend-section">
+            <h2 class="section-title">社区规模趋势</h2>
+            <div class="chart-row-full">
+                <div class="chart-container mau-chart-wrapper">
+                    <div class="chart-header">
+                        <div class="chart-title">社区月活统计</div>
+                        <button class="export-btn" onclick="exportMAUData()">导出详细数据</button>
+                    </div>
+                    <div id="chart-mau" class="chart" style="height: 400px;"></div>
+                </div>
+            </div>
+            <div class="chart-row-3">
+                <div class="chart-container">
+                    <div class="chart-title">累计核心开发者</div>
+                    <div id="chart-core-devs" class="chart"></div>
+                </div>
+                <div class="chart-container">
+                    <div class="chart-title">累计贡献者</div>
+                    <div id="chart-contributors" class="chart"></div>
+                </div>
+                <div class="chart-container">
+                    <div class="chart-title">累计下载量</div>
+                    <div id="chart-downloads" class="chart"></div>
+                </div>
+            </div>
+
+            <!-- 目标进展进度条 -->
+            <div class="progress-row">
+                <div class="progress-card">
+                    <div class="progress-header">
+                        <span class="progress-label">核心开发者目标进展</span>
+                        <span class="progress-value"><span id="core-dev-percent">0%</span></span>
+                    </div>
+                    <div class="progress-bar-wrapper">
+                        <div class="progress-bar-fill core-dev-fill" id="core-dev-progress-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-detail">
+                        <span id="core-dev-progress-text">0</span> / 2000 人
+                    </div>
+                </div>
+                <div class="progress-card">
+                    <div class="progress-header">
+                        <span class="progress-label">26年新增贡献者目标进展</span>
+                        <span class="progress-value"><span id="contributor-percent">0%</span></span>
+                    </div>
+                    <div class="progress-bar-wrapper">
+                        <div class="progress-bar-fill contributor-fill" id="contributor-progress-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-detail">
+                        <span id="contributor-progress-text">0</span> / 200 人
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 第三行：每周新增趋势 -->
+        <section class="trend-section">
+            <h2 class="section-title">每周新增趋势</h2>
+            <div class="chart-row-2">
+                <div class="chart-container">
+                    <div class="chart-title">每周新增核心开发者</div>
+                    <div id="chart-new-core-devs" class="chart"></div>
+                </div>
+                <div class="chart-container">
+                    <div class="chart-title">每周新增贡献者</div>
+                    <div id="chart-new-contributors" class="chart"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 第四行：贡献者详情 -->
+        <section class="detail-section">
+            <h2 class="section-title">贡献者详情</h2>
+            <div class="detail-row">
+                <!-- 上周新增核心开发者 -->
+                <div class="detail-card new-core-devs-card">
+                    <h3 class="detail-card-title">🌟 上周新增核心开发者</h3>
+                    <div class="scrollable-content-10">
+                        <ul id="new-core-devs-list" class="detail-list">
+                            <!-- 动态填充 -->
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- 上周新增贡献者 -->
+                <div class="detail-card new-contributors-card">
+                    <h3 class="detail-card-title">👋 上周新增贡献者</h3>
+                    <div class="scrollable-content-10">
+                        <ul id="new-contributors-list" class="detail-list">
+                            <!-- 动态填充 -->
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Top10 贡献者 -->
+                <div class="detail-card top10-card">
+                    <h3 class="detail-card-title">🏆 Top10 贡献者</h3>
+                    <ul id="top10-list" class="detail-list">
+                        <!-- 动态填充 -->
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- 第五行：Issue 质量 -->
+        <section class="quality-section">
+            <h2 class="section-title">ISSUE质量指标</h2>
+            <div class="quality-row">
+                <div class="quality-card">
+                    <div class="quality-title">全量ISSUE平均关闭时长</div>
+                    <div class="quality-value" id="avg-close-time-all">0</div>
+                    <div class="quality-unit">天</div>
+                </div>
+
+                <div class="quality-card">
+                    <div class="quality-title">全量ISSUE闭环率</div>
+                    <div class="quality-value" id="resolution-rate-all">0%</div>
+                    <div class="quality-detail">
+                        已关闭: <span id="closed-issues-all">0</span> / 总数: <span id="total-issues-all">0</span>
+                    </div>
+                    <div class="quality-progress">
+                        <div class="progress-bar">
+                            <div class="progress-fill resolution-fill" id="resolution-progress-all"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="quality-card">
+                    <div class="quality-title">26年ISSUE平均关闭时长</div>
+                    <div class="quality-value" id="avg-close-time">0</div>
+                    <div class="quality-unit">天</div>
+                </div>
+
+                <div class="quality-card">
+                    <div class="quality-title">26年ISSUE闭环率</div>
+                    <div class="quality-value" id="resolution-rate">0%</div>
+                    <div class="quality-detail">
+                        已关闭: <span id="closed-issues">0</span> / 总数: <span id="total-issues-2026">0</span>
+                    </div>
+                    <div class="quality-progress">
+                        <div class="progress-bar">
+                            <div class="progress-fill resolution-fill" id="resolution-progress"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 超过10天未闭环的ISSUE -->
+            <div class="long-open-issues">
+                <h3 class="long-issues-title">⚠️ 超过10天未闭环的ISSUE (<span id="long-open-issues-count">0</span>条)</h3>
+                <div class="scrollable-content long-issues-list">
+                    <ul id="long-open-issues-list" class="detail-list">
+                        <!-- 动态填充 -->
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- 页脚 -->
+        <footer class="dashboard-footer">
+            <div>数据更新时间: <span id="update-time">--</span></div>
+            <div class="footer-links">
+                <a href="https://gitcode.com/Ascend/pytorch" target="_blank">访问代码仓 →</a>
+            </div>
+        </footer>
+    </div>
+
+    <script src="js/dashboard.js?v=8"></script>
+</body>
+</html>
