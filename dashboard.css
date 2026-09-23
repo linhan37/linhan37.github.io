@@ -80,6 +80,41 @@ body {
     font-size: 18px;
 }
 
+/* P5：头部右侧容器（仓切换器 + 数据周期） */
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+}
+
+.repo-switcher-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.repo-switcher-label {
+    color: var(--text-secondary);
+    font-size: 16px;
+    font-weight: 500;
+}
+
+/* 仓切换下拉（P5） */
+.repo-switcher {
+    padding: 6px 12px;
+    font-size: 15px;
+    color: var(--text-primary);
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    cursor: pointer;
+    outline: none;
+}
+
+.repo-switcher:hover {
+    border-color: var(--color-primary);
+}
+
 /* KPI Section */
 .kpi-section {
     display: grid;

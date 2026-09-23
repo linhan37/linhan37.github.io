@@ -13,11 +13,17 @@
         <!-- 头部 -->
         <header class="dashboard-header">
             <div class="logo-section">
-                <img src="./pytorch.svg" alt="PyTorch Logo" class="logo">
-                <h1>Ascend for PyTorch 社区运营看板<span class="dept-info">昇腾AI框架生态发展（模块）</span></h1>
+                <img src="./pytorch.svg" alt="PyTorch Logo" class="logo" id="repo-logo">
+                <h1><span id="repo-title">Ascend for PyTorch 社区运营看板</span><span class="dept-info">昇腾AI框架生态发展（模块）</span></h1>
             </div>
-            <div class="data-period">
-                数据周期: <span id="period-range">--</span>
+            <div class="header-right">
+                <div class="repo-switcher-section">
+                    <label for="repo-switcher" class="repo-switcher-label">代码仓:</label>
+                    <select id="repo-switcher" class="repo-switcher" onchange="switchRepo(this.value)"></select>
+                </div>
+                <div class="data-period">
+                    数据周期: <span id="period-range">--</span>
+                </div>
             </div>
         </header>
 
@@ -114,7 +120,7 @@
                         <div class="progress-bar-fill core-dev-fill" id="core-dev-progress-bar" style="width: 0%"></div>
                     </div>
                     <div class="progress-detail">
-                        <span id="core-dev-progress-text">0</span> / 2000 人
+                        <span id="core-dev-progress-text">0</span> / <span id="core-dev-target-text">2000</span> 人
                     </div>
                 </div>
                 <div class="progress-card">
@@ -126,7 +132,7 @@
                         <div class="progress-bar-fill contributor-fill" id="contributor-progress-bar" style="width: 0%"></div>
                     </div>
                     <div class="progress-detail">
-                        <span id="contributor-progress-text">0</span> / 200 人
+                        <span id="contributor-progress-text">0</span> / <span id="contributor-target-text">200</span> 人
                     </div>
                 </div>
             </div>
@@ -239,7 +245,7 @@
         <footer class="dashboard-footer">
             <div>数据更新时间: <span id="update-time">--</span></div>
             <div class="footer-links">
-                <a href="https://gitcode.com/Ascend/pytorch" target="_blank">访问代码仓 →</a>
+                <a href="https://gitcode.com/Ascend/pytorch" target="_blank" id="repo-link">访问代码仓 →</a>
             </div>
         </footer>
     </div>

@@ -1,10 +1,37 @@
 /**
  * Torch-NPU Dashboard
  * 看板逻辑和图表渲染
+ * P5 多仓：主 JSON 为 {meta, repos, aggregate} 三层结构——仓切换器按仓渲染，
+ * "全仓汇总"视图消费 aggregate 段（跨仓去重口径，修订六）。
  */
 
-// 全局数据存储
-let dashboardData = null;
+// 全局数据存储（P5：主 JSON 三层结构）
+let mainData = null;        // {meta, repos, aggregate, generated_at}
+let currentRepoKey = null;  // 当前选中仓 repo_key，或 '__aggregate__'（全仓汇总）
+let dashboardData = null;   // 当前仓的单仓数据（repos[repo_key]，结构与 P4 前一致）
+
+const AGG_KEY = '__aggregate__';
+
+// 修订六：当前趋势图的周轴覆盖仓标注（汇总视图 = aggregate.trends.covered_repos；
+// 单仓视图 = null 不打扰）。createLineChart/createBarChart tooltip 消费。
+let activeTrendCoverage = null;
+let activeTrendWeeks = null;  // 周轴原始键（如 '2026-03-08'），与 coverage 查询对齐
+
+/**
+ * 修订六 tooltip 追加段：某周仅部分仓有批次时标注"仅覆盖 N/M 仓"
+ * （周轴并集 + covered_repos 标注，不插值不静默合并）
+ */
+function appendCoverageTooltip(html, dataIndex) {
+    if (!activeTrendCoverage || !activeTrendWeeks) return html;
+    const origWeek = activeTrendWeeks[dataIndex];
+    if (!origWeek) return html;
+    const covered = activeTrendCoverage[origWeek] || [];
+    const allRepos = (mainData && mainData.meta && mainData.meta.repos) || [];
+    if (covered.length && covered.length < allRepos.length) {
+        html += `<br/><span style="color:#F59E0B;font-size:12px;">仅覆盖 ${covered.length}/${allRepos.length} 仓</span>`;
+    }
+    return html;
+}
 
 /**
  * 初始化看板
@@ -14,28 +41,206 @@ async function initDashboard() {
 
     try {
         // 加载数据
-        const response = await fetch('./dashboard_data.json?v=20260915145329');
+        const response = await fetch('./dashboard_data.json?v=20260923101904');
         if (!response.ok) {
             throw new Error('Failed to load dashboard data');
         }
 
-        dashboardData = await response.json();
-        console.log('[Dashboard] Data loaded:', dashboardData);
+        mainData = await response.json();
+        console.log('[Dashboard] Main data loaded:', mainData);
 
-        // 更新页面
-        updateHeader();
-        updateKPIs();
-        updateTrendCharts();
-        updateNewTrendCharts();
-        updateDetailCards();
-        updateQualityMetrics();
-        updateMAUChart();
-        updateFooter();
+        // P5 三层结构（meta/repos/aggregate）——repos 段存放各仓数据。
+        // 兼容旧单仓结构（P4 前主 JSON 直接是单仓数据）：无 meta 时按单仓直渲染。
+        if (mainData && mainData.meta && mainData.meta.repos) {
+            buildRepoSwitcher();
+            // 默认选中"全仓汇总"（陛下 2026-09-18 口径）；aggregate 段
+            // 无有效数据时（计算失败置空）回退有数据的仓——避免汇总视图
+            // 渲染全空
+            const agg = mainData.aggregate;
+            const aggReady = !!(agg && agg.kpi && agg.kpi.week_ending);
+            if (aggReady) {
+                currentRepoKey = AGG_KEY;
+            } else {
+                const firstWithData = mainData.meta.repos.find(m => mainData.repos[m.repo_key]);
+                currentRepoKey = firstWithData
+                    ? firstWithData.repo_key
+                    : (mainData.meta.repos[0] || {}).repo_key;
+            }
+            const select = document.getElementById('repo-switcher');
+            if (select) select.value = currentRepoKey;
+            switchRepo(currentRepoKey);
+        } else {
+            // 旧结构兜底：整个 JSON 即单仓数据（P4 及以前的镜像文件）
+            console.log('[Dashboard] Legacy single-repo JSON detected');
+            dashboardData = mainData;
+            renderCurrentRepo();
+        }
 
     } catch (error) {
         console.error('[Dashboard Error]', error);
         showError('数据加载失败，请确保已运行数据采集脚本');
     }
+}
+
+/**
+ * P5：构建仓切换器 options（meta.repos 填充，追加"全仓汇总"）
+ */
+function buildRepoSwitcher() {
+    const select = document.getElementById('repo-switcher');
+    if (!select || !mainData || !mainData.meta) return;
+
+    // 清空重建
+    select.innerHTML = '';
+
+    // 各仓 option（未采集过的仓标注"未采集"）
+    // 陛下 2026-09-18 口径：切换器显示实际代码仓名（project_path，如
+    // Ascend/pytorch）——display_name 是展示名，不再用于切换器
+    mainData.meta.repos.forEach(m => {
+        const hasData = !!(mainData.repos && mainData.repos[m.repo_key]);
+        const opt = document.createElement('option');
+        opt.value = m.repo_key;
+        const label = m.project_path || m.display_name;
+        opt.textContent = hasData ? label : `${label}（暂无看板数据）`;
+        select.appendChild(opt);
+    });
+
+    // 追加"全仓汇总"
+    const aggOpt = document.createElement('option');
+    aggOpt.value = AGG_KEY;
+    aggOpt.textContent = '全仓汇总';
+    select.appendChild(aggOpt);
+}
+
+/**
+ * P5：仓切换入口（select onchange）
+ */
+function switchRepo(repoKey) {
+    currentRepoKey = repoKey;
+    console.log('[Dashboard] Switching to repo:', repoKey);
+    switchRepoRenderOnly();
+}
+
+/**
+ * P5：按当前 currentRepoKey 渲染（不发起新 fetch——数据已全量在 mainData）
+ */
+function switchRepoRenderOnly() {
+    // 修订六：周趋势覆盖仓标注——汇总视图挂 aggregate.trends.covered_repos，
+    // 单仓视图清空（单仓周轴天然全覆盖，不打扰）
+    activeTrendCoverage = null;
+    activeTrendWeeks = null;
+
+    if (currentRepoKey === AGG_KEY) {
+        dashboardData = buildAggregateView();
+        if (dashboardData && dashboardData.trends) {
+            activeTrendCoverage = dashboardData.trends.covered_repos || null;
+            // 汇总周轴为原始日期键（YYYY-MM-DD），与 coverage 查询对齐
+            activeTrendWeeks = dashboardData.trends.weeks || null;
+        }
+    } else {
+        dashboardData = (mainData.repos && mainData.repos[currentRepoKey]) || null;
+    }
+
+    if (!dashboardData) {
+        // ecosystem 可能已有明细数据（P3 试抓）但无 weekly_metrics 批次——
+        // 看板需全流程跑一次才有周指标，文案不写"尚未采集"避免误导
+        showError('该仓暂无看板数据——先运行全流程采集: python src/main.py --repo <repo_key>');
+        return;
+    }
+
+    renderCurrentRepo();
+}
+
+/**
+ * P5：渲染当前 dashboardData（仓身份相关的动态元素在此更新）
+ */
+function renderCurrentRepo() {
+    // 标题/Logo/页脚链接动态化（仓身份段）
+    updateRepoIdentity();
+
+    // 数据段渲染（与 P4 前渲染链一致）
+    updateHeader();
+    updateKPIs();
+    updateTrendCharts();
+    updateNewTrendCharts();
+    updateDetailCards();
+    updateQualityMetrics();
+    updateMAUChart();
+    updateFooter();
+}
+
+/**
+ * P5：仓身份动态化——标题/Logo/页脚链接 + 汇总视图角标（author_id 覆盖率）
+ */
+function updateRepoIdentity() {
+    const meta = mainData && mainData.meta;
+    if (!meta || !meta.repos) return;
+
+    let repoMeta = null;
+    if (currentRepoKey === AGG_KEY) {
+        // 汇总视图无单一仓链接——隐藏（Logo/标题不随此切换，见下方口径注释）
+        repoMeta = { repo_url: null };
+    } else {
+        repoMeta = meta.repos.find(m => m.repo_key === currentRepoKey) || null;
+    }
+
+    const titleEl = document.getElementById('repo-title');
+    if (titleEl && repoMeta) {
+        // 陛下 2026-09-18 口径：看板标题保持默认仓名不变——不随仓选择/汇总视图切换
+        titleEl.textContent = 'Ascend for PyTorch 社区运营看板';
+    }
+
+    const logoEl = document.getElementById('repo-logo');
+    if (logoEl) {
+        // 陛下 2026-09-18 口径：Logo 与标题同口径——恒显默认仓（首个 enabled）
+        // Logo，不随仓选择/汇总视图切换（eco 仓未配 logo、汇总视图无单一
+        // Logo 时不再隐藏——此前两场景左上角 Logo 消失）
+        const defaultMeta = meta.repos[0];
+        if (defaultMeta && defaultMeta.logo) {
+            logoEl.src = defaultMeta.logo;
+        }
+        logoEl.style.display = '';
+    }
+
+    const linkEl = document.getElementById('repo-link');
+    if (linkEl) {
+        if (repoMeta && repoMeta.repo_url) {
+            linkEl.href = repoMeta.repo_url;
+            linkEl.style.display = '';
+        } else {
+            linkEl.style.display = 'none';
+        }
+    }
+}
+
+/**
+ * P5：全仓汇总视图数据适配——把 aggregate 段适配为单仓渲染链的数据形状，
+ * 并叠加 meta 的 targets（陛下拍板口径：全仓目标 = 各仓目标相加，
+ * AggregateCalculator 已在 aggregate.kpi.targets 输出）。
+ */
+function buildAggregateView() {
+    const agg = mainData && mainData.aggregate;
+    if (!agg) return null;
+
+    return {
+        week_ending: agg.kpi && agg.kpi.week_ending,
+        kpi: agg.kpi || {},
+        issue_quality: agg.issue_quality || {},
+        trends: agg.trends || {},
+        download_trends: agg.download_trends || {},
+        // 单人维度明细（P5 修复：aggregate 已跨仓合并输出——此前置空导致
+        // Top10/新增名单全部显示 eco 单仓数据，汇总视图名不副实）
+        top10_contributors: agg.top_contributors || [],
+        new_contributors: agg.new_contributors || [],
+        new_core_developers: agg.new_core_developers || [],
+        long_open_issues: (agg.long_open_issues || []).map(i => ({
+            ...i,
+            title: `[${i.repo_display || i.repo}] ${i.title}`
+        })),
+        new_contributors_2026: (agg.kpi && agg.kpi.contributors && agg.kpi.contributors.new_2026) || 0,
+        mau: agg.mau || { summary: {}, coverage: {} },
+        generated_at: agg.generated_at,
+        __aggregate__: true,  // 汇总视图标记（进度条目标值取 kpi.targets）
+    };
 }
 
 /**
@@ -89,23 +294,45 @@ function updateKPIs() {
 
 /**
  * 更新目标进度条
+ * P5 修订五 B3：目标值不再硬编 2000/200——随 meta 注入（单仓=各自 targets，
+ * 全仓汇总=各仓目标相加，即 aggregate.kpi.targets，陛下 2026-09-16 拍板口径）
  */
 function updateGoalProgress(kpi) {
-    // 核心开发者目标：2000人
-    const coreDevTarget = 2000;
+    // 目标值来源：汇总视图取 kpi.targets（各仓相加）；单仓取 meta.repos 注入
+    let coreDevTarget = null;
+    let contributorTarget = null;
+    if (dashboardData && dashboardData.__aggregate__) {
+        const t = (kpi && kpi.targets) || {};
+        coreDevTarget = t.core_developers || null;
+        contributorTarget = t.contributors || null;
+    } else if (mainData && mainData.meta && mainData.meta.repos) {
+        const m = mainData.meta.repos.find(m => m.repo_key === currentRepoKey);
+        if (m && m.targets) {
+            coreDevTarget = m.targets.core_developers || null;
+            contributorTarget = m.targets.contributors || null;
+        }
+    }
+
+    // 核心开发者目标进度
     const coreDevTotal = kpi.core_developers.total || 0;
-    const coreDevPercent = Math.min((coreDevTotal / coreDevTarget) * 100, 100);
+    const coreDevPercent = coreDevTarget
+        ? Math.min((coreDevTotal / coreDevTarget) * 100, 100) : 0;
 
     document.getElementById('core-dev-progress-text').textContent = formatNumber(coreDevTotal);
     document.getElementById('core-dev-percent').textContent = coreDevPercent.toFixed(1) + '%';
+    // 目标值文本同步注入（B3：进度条详情 "/ 2000 人" 不再写死）
+    const coreTargetText = document.getElementById('core-dev-target-text');
+    if (coreTargetText) coreTargetText.textContent = formatNumber(coreDevTarget || 0);
 
-    // 26年新增贡献者目标：200人
-    const contributorTarget = 200;
+    // 26年新增贡献者目标进度
     const contributorTotal = dashboardData.new_contributors_2026 || 0;
-    const contributorPercent = Math.min((contributorTotal / contributorTarget) * 100, 100);
+    const contributorPercent = contributorTarget
+        ? Math.min((contributorTotal / contributorTarget) * 100, 100) : 0;
 
     document.getElementById('contributor-progress-text').textContent = formatNumber(contributorTotal);
     document.getElementById('contributor-percent').textContent = contributorPercent.toFixed(1) + '%';
+    const contributorTargetText = document.getElementById('contributor-target-text');
+    if (contributorTargetText) contributorTargetText.textContent = formatNumber(contributorTarget || 0);
 
     // 延迟执行动画，让用户能看到进度条从0增长的动画效果
     setTimeout(() => {
@@ -174,6 +401,10 @@ function createLineChart(containerId, xAxisData, seriesData) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
+    // P5 仓切换重渲染：先释放既有实例（否则 echarts 重复 init 告警且状态混乱）
+    const existing = echarts.getInstanceByDom(container);
+    if (existing) existing.dispose();
+
     const chart = echarts.init(container);
 
     const series = seriesData.map(s => ({
@@ -215,7 +446,14 @@ function createLineChart(containerId, xAxisData, seriesData) {
             trigger: 'axis',
             backgroundColor: 'rgba(255, 255, 255, 0.95)',
             borderColor: '#E2E8F0',
-            textStyle: { color: '#1E293B' }
+            textStyle: { color: '#1E293B' },
+            formatter: function(params) {
+                // 修订六：汇总视图某周仅部分仓有批次时追加覆盖仓标注
+                let html = params.map(p =>
+                    `${p.marker}${p.seriesName}: <b>${p.value === null || p.value === undefined ? '暂无' : p.value}</b>`
+                ).join('<br/>');
+                return appendCoverageTooltip(html, params[0].dataIndex);
+            }
         }
     };
 
@@ -231,6 +469,10 @@ function createLineChart(containerId, xAxisData, seriesData) {
 function createBarChart(containerId, xAxisData, seriesData) {
     const container = document.getElementById(containerId);
     if (!container) return;
+
+    // P5 仓切换重渲染：先释放既有实例（否则 echarts 重复 init 告警且状态混乱）
+    const existing = echarts.getInstanceByDom(container);
+    if (existing) existing.dispose();
 
     const chart = echarts.init(container);
 
@@ -272,7 +514,14 @@ function createBarChart(containerId, xAxisData, seriesData) {
             trigger: 'axis',
             backgroundColor: 'rgba(255, 255, 255, 0.95)',
             borderColor: '#E2E8F0',
-            textStyle: { color: '#1E293B' }
+            textStyle: { color: '#1E293B' },
+            formatter: function(params) {
+                // 修订六：汇总视图某周仅部分仓有批次时追加覆盖仓标注
+                let html = params.map(p =>
+                    `${p.marker}${p.seriesName}: <b>${p.value === null || p.value === undefined ? '暂无' : p.value}</b>`
+                ).join('<br/>');
+                return appendCoverageTooltip(html, params[0].dataIndex);
+            }
         }
     };
 
@@ -484,6 +733,9 @@ function showError(message) {
 
 /**
  * 更新月活统计图表
+ * 修订五 A4（必修，2027 跨年雷修复）：月份轴不再写死 `2026-` 前缀——由
+ * mau.summary 实际键动态生成（数据有哪几个月画哪几个月，跨年自然支持），
+ * 当前月高亮用 currentMonthStr 与键对比（不再假设年份）。
  */
 function updateMAUChart() {
     if (!dashboardData || !dashboardData.mau || !dashboardData.mau.summary) {
@@ -500,14 +752,18 @@ function updateMAUChart() {
     const currentYear = new Date().getFullYear();
     const currentMonthStr = `${currentYear}-${currentMonth.toString().padStart(2, '0')}`;
 
+    // 修订五 A4：月份轴由 summary 实际键动态生成（升序），跨年键如
+    // 2027-01 正常渲染——不再写死 2026 前缀
+    const monthKeys = Object.keys(summary).sort();
     const months = [];
     const values = [];
 
-    for (let m = 1; m <= 12; m++) {
-        const monthStr = `2026-${m.toString().padStart(2, '0')}`;
-        months.push(`${m}月`);
-        values.push(summary[monthStr] !== undefined ? summary[monthStr] : null);
-    }
+    monthKeys.forEach(key => {
+        // 键形如 YYYY-MM；展示"YYYY年M月"（跨年时年份可辨）
+        const [y, m] = key.split('-');
+        months.push(`${parseInt(y)}年${parseInt(m)}月`);
+        values.push(summary[key] !== undefined ? summary[key] : null);
+    });
 
     const container = document.getElementById('chart-mau');
     if (!container) return;
@@ -544,8 +800,8 @@ function updateMAUChart() {
                 itemStyle: {
                     borderRadius: [4, 4, 0, 0],
                     color: function(params) {
-                        const monthIndex = params.dataIndex + 1;
-                        const monthStr = `2026-${monthIndex.toString().padStart(2, '0')}`;
+                        // 修订五 A4：高亮判断用实际月键与当前月对比（不拼年份前缀）
+                        const monthStr = monthKeys[params.dataIndex];
                         if (monthStr === currentMonthStr) {
                             return new echarts.graphic.LinearGradient(0, 0, 0, 1, [
                                 { offset: 0, color: '#F59E0B' },
@@ -579,7 +835,18 @@ function updateMAUChart() {
             formatter: function(params) {
                 const p = params[0];
                 if (p.value === null || p.value === undefined) return p.name + '<br/>暂无数据';
-                return p.name + '<br/>' + p.value + ' 人';
+                let html = p.name + '<br/>' + p.value + ' 人';
+                // P5 汇总视图：MAU 月份 coverage 标注（该月仅部分仓有数据时提示）
+                const coverage = dashboardData.mau && dashboardData.mau.coverage;
+                if (dashboardData.__aggregate__ && coverage) {
+                    const monthKey = monthKeys[p.dataIndex];
+                    const covered = coverage[monthKey] || [];
+                    const allRepos = (mainData && mainData.meta && mainData.meta.repos) || [];
+                    if (covered.length && covered.length < allRepos.length) {
+                        html += `<br/><span style="color:#F59E0B;font-size:12px;">仅覆盖 ${covered.length}/${allRepos.length} 仓</span>`;
+                    }
+                }
+                return html;
             }
         }
     };
@@ -598,17 +865,25 @@ function exportMAUData() {
     }
 
     const details = dashboardData.mau.details;
-    const headers = ['月份', '开发者ID', '开发者姓名', '开发者昵称', 'PR合入数', 'PR评论数', 'Issue提交数', 'Issue评论数'];
-    const rows = details.map(r => [
-        r.month,
-        r.author_id,
-        r.author_name,
-        r.author_nickname,
-        r.pr_num,
-        r.pr_comments_num,
-        r.issue_num,
-        r.issue_comments_num
-    ]);
+    // P5 汇总视图：明细为跨仓同人同月合并行（数值 SUM）——多"参与仓"列区分
+    const isAgg = !!dashboardData.__aggregate__ && details.some(r => r.repos);
+    const headers = isAgg
+        ? ['月份', '开发者ID', '开发者姓名', '开发者昵称', 'PR合入数', 'PR评论数', 'Issue提交数', 'Issue评论数', '参与仓']
+        : ['月份', '开发者ID', '开发者姓名', '开发者昵称', 'PR合入数', 'PR评论数', 'Issue提交数', 'Issue评论数'];
+    const rows = details.map(r => {
+        const base = [
+            r.month,
+            r.author_id,
+            r.author_name,
+            r.author_nickname,
+            r.pr_num,
+            r.pr_comments_num,
+            r.issue_num,
+            r.issue_comments_num
+        ];
+        if (isAgg) base.push((r.repos || []).join(', '));
+        return base;
+    });
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     const workbook = XLSX.utils.book_new();
