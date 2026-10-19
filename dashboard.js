@@ -41,7 +41,7 @@ async function initDashboard() {
 
     try {
         // 加载数据
-        const response = await fetch('./dashboard_data.json?v=20261016144000');
+        const response = await fetch('./dashboard_data.json?v=20261019195846');
         if (!response.ok) {
             throw new Error('Failed to load dashboard data');
         }
